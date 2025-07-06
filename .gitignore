@@ -1,0 +1,11 @@
+# 가상환경 폴더 무시
+venv/
+.venv/
+
+# __pycache__ 무시
+__pycache__/
+
+# 기타
+*.pyc
+.DS_Store
+.env

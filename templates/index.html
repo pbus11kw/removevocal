@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Vocal/Instrumental Separator</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <h1>🎵 MP3 Vocal/Instrumental Separation</h1>
+  <p class="info-text">최대 파일 크기: {{ MAX_FILE_SIZE_MB }}MB, 최대 재생 시간: {{ MAX_DURATION_SECONDS }}초</p>
+
+  {% if status_message %}
+  <div id="statusMessageContainer" class="status-message success">
+    {{ status_message }}
+  </div>
+  {% endif %}
+
+  {% if error %}
+  <div id="statusMessageContainer" class="status-message error">
+    {{ error }}
+  </div>
+  {% endif %}
+
+  <div id="loadingOverlay" class="loading-overlay">
+    <img src="/static/loading.gif" alt="Loading..." class="loading-gif">
+    <p id="loadingStatusText" class="loading-status-text">오디오 분리 작업 중...</p>
+  </div>
+
+  <div class="container">
+    <div class="tab">
+      <button class="tablinks active" onclick="openTab(event, 'FileUpload')">Upload MP3</button>
+      <button class="tablinks" onclick="openTab(event, 'YouTubeLink')">YouTube URL</button>
+    </div>
+
+    <form action="/upload" method="post" enctype="multipart/form-data">
+      <div id="FileUpload" class="tabcontent" style="display: block;">
+        <div class="input-group">
+          <label for="fileInput" class="input-label">Select MP3 file:</label>
+          <input type="file" name="file" id="fileInput" accept=".mp3,audio/*">
+        </div>
+      </div>
+
+      <div id="YouTubeLink" class="tabcontent">
+        <div class="input-group">
+          <label for="youtube_url" class="input-label">Enter YouTube URL:</label>
+          <input type="text" name="youtube_url" id="youtube_url" class="youtube-input" width="=1600px">
+        </div>
+      </div>
+      <button type="submit" class="separate-button">Separate</button>
+    </form>
+  </div>
+
+  <div class="container" id="preview-container" style="display: none;">
+      <h2>Preview</h2>
+      <audio id="audioPlayer" controls style="width: 100%;"></audio>
+  </div>
+
+  {% if vocal_url %}
+  <div id="resultContainer" class="container result-container">
+    <h2>Result Files</h2>
+    <div class="result-item">
+      <span>Original</span>
+      <audio controls src="{{ original_url }}"></audio>
+      <a href="{{ original_url }}" download><button>Download</button></a>
+    </div>
+    <div class="result-item">
+      <span>Vocal</span>
+      <audio controls src="{{ vocal_url }}"></audio>
+      <a href="{{ vocal_url }}" download><button>Download</button></a>
+    </div>
+    <div class="result-item">
+      <span>Instrumental</span>
+      <audio controls src="{{ inst_url }}"></audio>
+      <a href="{{ inst_url }}" download><button>Download</button></a>
+    </div>
+    <button type="button" class="reset-button" onclick="resetPage()">새 작업</button>
+  </div>
+  {% endif %}
+
+  <script>
+    // Configuration from backend
+    const MAX_FILE_SIZE_MB = {{ MAX_FILE_SIZE_MB }};
+    const MAX_DURATION_SECONDS = {{ MAX_DURATION_SECONDS }};
+
+    function openTab(evt, tabName) {
+      var i, tabcontent, tablinks;
+      tabcontent = document.getElementsByClassName("tabcontent");
+      for (i = 0; i < tabcontent.length; i++) {
+        tabcontent[i].style.display = "none";
+      }
+      tablinks = document.getElementsByClassName("tablinks");
+      for (i = 0; i < tablinks.length; i++) {
+        tablinks[i].className = tablinks[i].className.replace(" active", "");
+      }
+      document.getElementById(tabName).style.display = "block";
+      evt.currentTarget.className += " active";
+
+      // Reset page state on tab change
+      const statusMessageContainer = document.getElementById('statusMessageContainer');
+      if (statusMessageContainer) {
+        statusMessageContainer.style.display = 'none';
+      }
+      const resultContainer = document.getElementById('resultContainer');
+      if (resultContainer) {
+        resultContainer.style.display = 'none';
+      }
+      separateButton.disabled = false; // Re-enable the separate button
+      fileInput.value = null; // Clear file input
+      youtubeUrlInput.value = ''; // Clear YouTube URL input
+      previewContainer.style.display = 'none'; // Hide preview
+      audioPlayer.src = ''; // Clear audio player
+      clearErrorMessage(); // Clear any previous error messages
+    }
+
+    const fileInput = document.getElementById('fileInput');
+    const audioPlayer = document.getElementById('audioPlayer');
+    const previewContainer = document.getElementById('preview-container');
+    const form = document.querySelector('form');
+    const separateButton = document.querySelector('.separate-button');
+    const loadingOverlay = document.getElementById('loadingOverlay');
+    const youtubeUrlInput = document.getElementById('youtube_url');
+
+    // Helper function to display error messages
+    function displayErrorMessage(message) {
+      let errorDiv = document.getElementById('clientErrorMessage');
+      if (!errorDiv) {
+        errorDiv = document.createElement('div');
+        errorDiv.id = 'clientErrorMessage';
+        errorDiv.className = 'status-message error';
+        document.body.insertBefore(errorDiv, document.body.firstChild.nextSibling); // Insert after h1
+      }
+      errorDiv.textContent = message;
+      errorDiv.style.display = 'block';
+    }
+
+    // Helper function to clear error messages
+    function clearErrorMessage() {
+      const errorDiv = document.getElementById('clientErrorMessage');
+      if (errorDiv) {
+        errorDiv.style.display = 'none';
+        errorDiv.textContent = '';
+      }
+    }
+
+    form.addEventListener('submit', (event) => {
+      // Prevent form submission if button is disabled by client-side validation
+      if (separateButton.disabled) {
+        event.preventDefault();
+        return;
+      }
+      separateButton.disabled = true;
+      loadingOverlay.style.display = 'flex';
+      clearErrorMessage(); // Clear client-side error on submit
+    });
+
+    fileInput.addEventListener('change', (event) => {
+      clearErrorMessage(); // Clear previous errors when a new file is selected
+      separateButton.disabled = false; // Re-enable button by default
+
+      const file = event.target.files[0];
+      if (file) {
+        // Client-side file size check
+        const fileSizeMB = file.size / (1024 * 1024);
+        if (fileSizeMB > MAX_FILE_SIZE_MB) {
+          displayErrorMessage(`파일 크기가 너무 큽니다. 최대 ${MAX_FILE_SIZE_MB}MB까지 허용됩니다.`);
+          separateButton.disabled = true; // Disable submit button
+          previewContainer.style.display = 'none';
+          audioPlayer.src = '';
+          return;
+        }
+
+        // Client-side duration check is complex and unreliable for all formats.
+        // We will rely on server-side check for duration.
+        // For immediate feedback, we can show preview and let server handle duration.
+
+        const objectURL = URL.createObjectURL(file);
+        audioPlayer.src = objectURL;
+        previewContainer.style.display = 'block';
+      } else {
+        previewContainer.style.display = 'none';
+        audioPlayer.src = '';
+      }
+    });
+
+    function resetPage() {
+      window.location.reload(); // Simply reload the page to reset everything
+    }
+  </script>
+</body>
+</html>
