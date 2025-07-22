@@ -1,11 +1,96 @@
-# 가상환경 폴더 무시
-venv/
-.venv/
-
-# __pycache__ 무시
+# Python
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.venv
+.virtualenv
 
-# 기타
-*.pyc
-.DS_Store
+# FastAPI / Uvicorn
 .env
+.env.local
+.env.production
+.env.development
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.directory
+
+# Claude AI 관련
+.claude/
+
+# 로그 파일
+logs/
+*.log
+*.log.*
+
+# 업로드된 파일들 (동적으로 생성되는 콘텐츠)
+uploads/*
+!uploads/.gitkeep
+
+# 출력 파일들 (동적으로 생성되는 콘텐츠)
+outputs/*
+!outputs/.gitkeep
+
+# 사전 훈련된 모델 (용량이 크므로 별도 다운로드 필요)
+pretrained_models/
+models/
+*.h5
+*.pb
+*.ckpt
+*.pth
+*.pt
+
+# 임시 파일
+tmp/
+temp/
+.tmp
+*.tmp
+*.temp
+
+# 패키지 관련
+dist/
+build/
+*.egg-info/
+.wheel/
+
+# 테스트
+.coverage
+.pytest_cache/
+.tox/
+htmlcov/
+
+# 배포 관련
+.vercel
+.netlify
+*.pid
+
+# 개발 중 생성되는 오디오 파일들
+*.wav
+*.mp3
+!static/*.mp3
+!static/*.wav
+
+# 에디터 백업
+*~
+.#*
+\#*#

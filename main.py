@@ -1,58 +1,42 @@
-from fastapi import FastAPI, Request, UploadFile, File, Form
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, Request, UploadFile, File, Form, Query, HTTPException, BackgroundTasks
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
-import os, uuid, subprocess, json, shutil
-import configparser
+from urllib.parse import unquote, quote
+import os
+import shutil
+import time
+import re
+from typing import Optional, Tuple
 
-# Load configuration from config.ini
-config = configparser.ConfigParser()
-config_file_path = 'config.ini'
-
-if not os.path.exists(config_file_path):
-    print(f"Error: config.ini not found at {config_file_path}")
-    # Fallback to default values or exit
-    MAX_FILE_SIZE_MB = 50
-    MAX_DURATION_SECONDS = 600
-else:
-    config.read(config_file_path)
-    try:
-        MAX_FILE_SIZE_MB = config.getint('LIMITS', 'MAX_FILE_SIZE_MB')
-        MAX_DURATION_SECONDS = config.getint('LIMITS', 'MAX_DURATION_SECONDS')
-        print(f"Configuration loaded: MAX_FILE_SIZE_MB={MAX_FILE_SIZE_MB}, MAX_DURATION_SECONDS={MAX_DURATION_SECONDS}")
-    except (configparser.NoSectionError, configparser.NoOptionError, ValueError) as e:
-        print(f"Error reading configuration from config.ini: {e}")
-        print("Using default values for limits.")
-        MAX_FILE_SIZE_MB = 50
-        MAX_DURATION_SECONDS = 600
-
-def replace_slash_with_underscore(filename):
-    return filename.replace("/", "_")
-
-def get_audio_duration(filepath):
-    try:
-        cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filepath]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        return float(result.stdout.strip())
-    except subprocess.CalledProcessError as e:
-        print(f"Error getting duration for {filepath}: {e.stderr}")
-        return None
-    except ValueError:
-        print(f"Could not parse duration for {filepath}")
-        return None
+from config_manager import config_manager
+from audio_utils import (
+    sanitize_filename, get_audio_duration, get_youtube_video_info,
+    download_youtube_audio, separate_audio_with_spleeter, convert_wav_to_mp3,
+    cleanup_files
+)
+from logger import app_logger
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-UPLOAD_DIR = "uploads"
-OUTPUT_DIR = "outputs"
+# Get configuration
+UPLOAD_DIR = config_manager.get_upload_dir()
+OUTPUT_DIR = config_manager.get_output_dir()
+MAX_FILE_SIZE_MB = config_manager.get_max_file_size_mb()
+MAX_DURATION_SECONDS = config_manager.get_max_duration_seconds()
+
+app_logger.info(f"Configuration: MAX_FILE_SIZE_MB={MAX_FILE_SIZE_MB}, MAX_DURATION_SECONDS={MAX_DURATION_SECONDS}")
+app_logger.info(f"Directories: UPLOAD_DIR={UPLOAD_DIR}, OUTPUT_DIR={OUTPUT_DIR}")
 
 # Clean up and create directories
 for directory in [UPLOAD_DIR, OUTPUT_DIR]:
     if os.path.exists(directory):
         shutil.rmtree(directory)
+        app_logger.info(f"Cleaned up directory: {directory}")
     os.makedirs(directory, exist_ok=True)
+    app_logger.info(f"Created directory: {directory}")
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
@@ -60,122 +44,165 @@ def home(request: Request):
                                                     "MAX_FILE_SIZE_MB": MAX_FILE_SIZE_MB,
                                                     "MAX_DURATION_SECONDS": MAX_DURATION_SECONDS})
 
+from file_handlers import validate_file_upload, validate_youtube_url, process_audio_separation
+from task_manager import task_manager, TaskStatus
+
 @app.post("/upload")
-async def upload(request: Request, file: UploadFile = File(None), youtube_url: str = Form(None)):
-    input_path = None
-    basename = None
-    spleeter_result_dir = None
-    vocal_mp3_path = None
-    inst_mp3_path = None
+async def upload(request: Request, background_tasks: BackgroundTasks, 
+                file: UploadFile = File(None), youtube_url: str = Form(None)):
+    """Handle file upload or YouTube URL processing for audio separation."""
+    
     try:
-        if file and file.filename:
-            # File Upload Logic
-            file_size_mb = file.size / (1024 * 1024)
-            if file_size_mb > MAX_FILE_SIZE_MB:
-                return templates.TemplateResponse("index.html", {"request": request, "error": f"파일 크기가 너무 큽니다. 최대 {MAX_FILE_SIZE_MB}MB까지 허용됩니다."})
-
-            basename = os.path.splitext(file.filename)[0]
-            input_path = f"{UPLOAD_DIR}/{file.filename}"
-            with open(input_path, "wb") as f:
-                f.write(await file.read())
-            
-            duration = get_audio_duration(input_path)
-            if duration is None or duration > MAX_DURATION_SECONDS:
-                os.remove(input_path) # Clean up the uploaded file
-                return templates.TemplateResponse("index.html", {"request": request, "error": f"오디오 길이가 너무 깁니다. 최대 {MAX_DURATION_SECONDS}초까지 허용됩니다."})
-
-        elif youtube_url:
-            # YouTube URL Logic
-            try:
-                # Get YouTube video info to check duration
-                yt_dlp_info_cmd = ["yt-dlp", "--dump-json", youtube_url]
-                proc_info = subprocess.run(yt_dlp_info_cmd, capture_output=True, text=True, check=True)
-                video_info = json.loads(proc_info.stdout)
-                
-                duration = video_info.get("duration")
-                if duration is None or duration > MAX_DURATION_SECONDS:
-                    return templates.TemplateResponse("index.html", {"request": request, "error": f"YouTube 영상 길이가 너무 깁니다. 최대 {MAX_DURATION_SECONDS}초까지 허용됩니다."})
-                
-                # Use yt-dlp to get video title as basename and download audio
-                basename = replace_slash_with_underscore(video_info.get("title", "downloaded_audio"))
-                input_path = f"{UPLOAD_DIR}/{basename}.mp3"
-                subprocess.run(["yt-dlp", "-x", "--audio-format", "mp3", "-o", input_path, youtube_url], check=True)
-
-                # Check file size after download for YouTube videos
-                file_size_mb = os.path.getsize(input_path) / (1024 * 1024)
-                if file_size_mb > MAX_FILE_SIZE_MB:
-                    os.remove(input_path) # Clean up the downloaded file
-                    return templates.TemplateResponse("index.html", {"request": request, "error": f"다운로드된 파일 크기가 너무 큽니다. 최대 {MAX_FILE_SIZE_MB}MB까지 허용됩니다."})
-
-            except subprocess.CalledProcessError as e:
-                return templates.TemplateResponse("index.html", {"request": request, "error": f"YouTube URL 처리 중 오류: {e.stderr.strip() if e.stderr else e}"})
-            except json.JSONDecodeError:
-                return templates.TemplateResponse("index.html", {"request": request, "error": "YouTube 영상 정보를 가져오는 데 실패했습니다."})
-
-        else:
-            return templates.TemplateResponse("index.html", {"request": request, "error": "파일을 업로드하거나 YouTube URL을 제공해주세요."})
-
-        # Display message for YouTube download
-        if youtube_url:
-            # This message will be displayed, but the process will continue
-            print("유투브에서 음원을 추출 중...")
-
-        # Spleeter and FFmpeg processing (existing logic)
-        # Display message for audio separation
-        print("오디오 분리 작업중...")
-        subprocess.run(["spleeter", "separate", "-o", OUTPUT_DIR, "-p", "spleeter:2stems", input_path], check=True)
-
-        spleeter_result_dir = f"{OUTPUT_DIR}/{basename}"
-        vocal_wav_path = f"{spleeter_result_dir}/vocals.wav"
-        inst_wav_path = f"{spleeter_result_dir}/accompaniment.wav"
-        vocal_mp3_path = f"{OUTPUT_DIR}/{basename}/{basename}_Vocal.mp3"
-        inst_mp3_path = f"{OUTPUT_DIR}/{basename}/{basename}_Inst.mp3"
-
-        # Convert WAV to MP3
-        subprocess.run(["ffmpeg", "-i", vocal_wav_path, vocal_mp3_path], check=True)
-        subprocess.run(["ffmpeg", "-i", inst_wav_path, inst_mp3_path], check=True)
-
-        # Clean up intermediate WAV files
-        os.remove(vocal_wav_path)
-        os.remove(inst_wav_path)
-
-        return templates.TemplateResponse("index.html", {
-            "request": request,
-            "vocal_url": f"/download?f={basename}&t=v",
-            "inst_url": f"/download?f={basename}&t=a",
-            "original_url": f"/download?f={basename}&t=o", # Add original file URL
-            "status_message": "오디오 분리 완료!"
+        # Basic validation only
+        if not file or not file.filename:
+            if not youtube_url:
+                app_logger.warning("No file or YouTube URL provided")
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "파일을 업로드하거나 YouTube URL을 제공해주세요."}
+                )
+        
+        # Create task immediately with minimal info
+        task_id = task_manager.create_task_immediate()
+        
+        # Try to submit task for processing
+        if not task_manager.submit_task_with_input(task_id, file, youtube_url, MAX_FILE_SIZE_MB, MAX_DURATION_SECONDS, UPLOAD_DIR):
+            # Task queue is full
+            return JSONResponse(
+                status_code=503,
+                content={"error": "서버가 바쁩니다. 잠시 후 다시 시도해주세요."}
+            )
+        
+        app_logger.info(f"Created immediate background task {task_id}")
+        
+        # Return task_id immediately - no template rendering
+        return JSONResponse(content={
+            "task_id": task_id,
+            "message": "음성 분리 작업을 시작했습니다."
         })
-    except subprocess.CalledProcessError as e:
-        # Clean up input file if spleeter/ffmpeg fails
-        if input_path and os.path.exists(input_path):
-            os.remove(input_path)
-        return templates.TemplateResponse("index.html", {
-            "request": request,
-            "error": f"오디오 분리 중 오류가 발생했습니다: {e.stderr.strip() if e.stderr else e}"
-        })
+        
     except Exception as e:
-        # Catch any other unexpected errors
-        if input_path and os.path.exists(input_path):
-            os.remove(input_path)
-        return templates.TemplateResponse("index.html", {
-            "request": request,
-            "error": f"예상치 못한 오류가 발생했습니다: {e}"
-        })
+        app_logger.error(f"Unexpected error during upload processing: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"예상치 못한 오류가 발생했습니다: {e}"}
+        )
+
+@app.get("/api/task/{task_id}")
+async def get_task_status(task_id: str):
+    """Get task status and progress."""
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    return JSONResponse(content=task.to_dict())
+
+@app.get("/api/stats")
+async def get_stats():
+    """Get task manager statistics."""
+    return JSONResponse(content=task_manager.get_stats())
+
+@app.post("/api/cleanup")
+async def cleanup_old_tasks():
+    """Clean up old tasks (admin endpoint)."""
+    task_manager.cleanup_old_tasks()
+    return JSONResponse(content={"message": "Cleanup completed"})
 
 @app.get("/download")
-def download(f: str, t: str):
-    if t == "v":
-        filename = f"{f}_Vocal.mp3"
-        filepath = f"{OUTPUT_DIR}/{f}/{filename}"
-    elif t == "a":
-        filename = f"{f}_Inst.mp3"
-        filepath = f"{OUTPUT_DIR}/{f}/{filename}"
-    elif t == "o":
-        # Assuming original files are in UPLOAD_DIR and are mp3
-        filename = f"{f}.mp3"
-        filepath = f"{UPLOAD_DIR}/{filename}"
-    else:
-        return {"error": "Invalid file type"}
+def download(
+    f: str = Query(..., description="Filename without extension"),
+    t: str = Query(..., pattern="^[vao]$", description="File type: v=vocal, a=accompaniment, o=original")
+):
+    """Handle file downloads for separated audio files."""
     
-    return FileResponse(filepath, media_type="audio/mpeg", filename=filename)
+    try:
+        # Decode URL-encoded filename and validate
+        try:
+            clean_filename = unquote(f, encoding='utf-8').strip()
+        except:
+            # If UTF-8 decoding fails, try other encodings or use original
+            try:
+                clean_filename = unquote(f, encoding='cp949').strip()  # Korean encoding
+            except:
+                clean_filename = f.strip()
+        
+        if not clean_filename:
+            app_logger.warning("Empty filename parameter after decoding")
+            raise HTTPException(status_code=400, detail="Invalid filename parameter")
+        
+        app_logger.info(f"Download request - filename: '{clean_filename}', type: '{t}'")
+        
+        # Build file paths based on type
+        if t == "v":
+            filename = f"{clean_filename}_Vocal.mp3"
+            filepath = os.path.join(OUTPUT_DIR, clean_filename, filename)
+        elif t == "a":
+            filename = f"{clean_filename}_Inst.mp3"
+            filepath = os.path.join(OUTPUT_DIR, clean_filename, filename)
+        elif t == "o":
+            filename = f"{clean_filename}.mp3"
+            filepath = os.path.join(UPLOAD_DIR, filename)
+        
+        app_logger.info(f"Looking for file at: {filepath}")
+        
+        # Check if file exists
+        if not os.path.exists(filepath):
+            app_logger.error(f"File not found: {filepath}")
+            
+            # Debug: List directory contents and try to find similar files
+            if t in ["v", "a"]:
+                output_subdir = os.path.join(OUTPUT_DIR, clean_filename)
+                if os.path.exists(output_subdir):
+                    files_in_dir = os.listdir(output_subdir)
+                    app_logger.info(f"Files in {output_subdir}: {files_in_dir}")
+                    
+                    # Try to find the file with similar name pattern
+                    target_suffix = "_Vocal.mp3" if t == "v" else "_Inst.mp3"
+                    for file_in_dir in files_in_dir:
+                        if file_in_dir.endswith(target_suffix):
+                            actual_filepath = os.path.join(output_subdir, file_in_dir)
+                            app_logger.info(f"Found similar file: {actual_filepath}")
+                            filepath = actual_filepath
+                            filename = file_in_dir
+                            break
+                else:
+                    app_logger.info(f"Output subdirectory does not exist: {output_subdir}")
+                    # Try to find directory with similar name
+                    if os.path.exists(OUTPUT_DIR):
+                        all_dirs = os.listdir(OUTPUT_DIR)
+                        app_logger.info(f"Available output directories: {all_dirs}")
+                        
+            elif t == "o":
+                if os.path.exists(UPLOAD_DIR):
+                    files_in_upload = os.listdir(UPLOAD_DIR)
+                    app_logger.info(f"Files in {UPLOAD_DIR}: {files_in_upload}")
+                    
+                    # Try to find the original file
+                    for file_in_upload in files_in_upload:
+                        if file_in_upload.endswith('.mp3') and clean_filename in file_in_upload:
+                            actual_filepath = os.path.join(UPLOAD_DIR, file_in_upload)
+                            app_logger.info(f"Found original file: {actual_filepath}")
+                            filepath = actual_filepath
+                            filename = file_in_upload
+                            break
+            
+            # Final check if we found an alternative file
+            if not os.path.exists(filepath):
+                raise HTTPException(status_code=404, detail="File not found")
+        
+        app_logger.info(f"Serving download: {filename}")
+        
+        # Create a simple ASCII-safe filename for Content-Disposition
+        safe_filename = "audio_download.mp3"
+        
+        return FileResponse(
+            filepath, 
+            media_type="audio/mpeg", 
+            filename=safe_filename
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        app_logger.error(f"Download error: {e}")
+        raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")

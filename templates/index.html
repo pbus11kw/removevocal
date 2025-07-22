@@ -2,51 +2,75 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Vocal/Instrumental Separator</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MP3 보컬 분리기</title>
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
-  <h1>🎵 MP3 Vocal/Instrumental Separation</h1>
-  <p class="info-text">최대 파일 크기: {{ MAX_FILE_SIZE_MB }}MB, 최대 재생 시간: {{ MAX_DURATION_SECONDS }}초</p>
+  <h1>🎤 MP3 보컬 분리기</h1>
+  <p class="info-text">최대 용량: {{ MAX_FILE_SIZE_MB }}MB, 최대 시간: {{ (MAX_DURATION_SECONDS / 60)|round|int }}분</p>
 
-  {% if status_message %}
-  <div id="statusMessageContainer" class="status-message success">
-    {{ status_message }}
-  </div>
-  {% endif %}
-
-  {% if error %}
-  <div id="statusMessageContainer" class="status-message error">
-    {{ error }}
-  </div>
-  {% endif %}
 
   <div id="loadingOverlay" class="loading-overlay">
-    <img src="/static/loading.gif" alt="Loading..." class="loading-gif">
-    <p id="loadingStatusText" class="loading-status-text">오디오 분리 작업 중...</p>
+    <div class="loading-container">
+      <div class="progress-circle">
+        <svg class="progress-svg" width="120" height="120">
+          <circle cx="60" cy="60" r="50" stroke="#e9ecef" stroke-width="8" fill="none"/>
+          <circle id="progressCircle" cx="60" cy="60" r="50" stroke="#007bff" stroke-width="8" 
+                  fill="none" stroke-dasharray="314" stroke-dashoffset="314" stroke-linecap="round"/>
+        </svg>
+        <div class="progress-percentage">
+          <span id="progressPercent">0%</span>
+        </div>
+      </div>
+      <div class="progress-steps">
+        <div id="step1" class="progress-step active">
+          <div class="step-icon">📤</div>
+          <div class="step-text">파일 업로드</div>
+        </div>
+        <div id="step2" class="progress-step">
+          <div class="step-icon">🔍</div>
+          <div class="step-text">파일 분석</div>
+        </div>
+        <div id="step3" class="progress-step">
+          <div class="step-icon">🎵</div>
+          <div class="step-text">음성 분리</div>
+        </div>
+        <div id="step4" class="progress-step">
+          <div class="step-icon">💾</div>
+          <div class="step-text">파일 생성</div>
+        </div>
+      </div>
+      <p id="loadingStatusText" class="loading-status-text">오디오 분리 작업 중...</p>
+    </div>
   </div>
 
   <div class="container">
     <div class="tab">
-      <button class="tablinks active" onclick="openTab(event, 'FileUpload')">Upload MP3</button>
+      <button class="tablinks active" onclick="openTab(event, 'FileUpload')">MP3 업로드</button>
       <button class="tablinks" onclick="openTab(event, 'YouTubeLink')">YouTube URL</button>
     </div>
 
     <form action="/upload" method="post" enctype="multipart/form-data">
       <div id="FileUpload" class="tabcontent" style="display: block;">
         <div class="input-group">
-          <label for="fileInput" class="input-label">Select MP3 file:</label>
+          <label for="fileInput" class="input-label">MP3 파일을 선택하거나 끌어다 놓으세요.</label>
+          <label for="fileInput" class="file-upload-label">파일 선택</label>
           <input type="file" name="file" id="fileInput" accept=".mp3,audio/*">
+          <span id="fileName" class="file-name">선택된 파일 없음</span>
         </div>
       </div>
 
       <div id="YouTubeLink" class="tabcontent">
         <div class="input-group">
-          <label for="youtube_url" class="input-label">Enter YouTube URL:</label>
-          <input type="text" name="youtube_url" id="youtube_url" class="youtube-input" width="=1600px">
+          <label for="youtube_url" class="input-label">YouTube URL을 입력하세요:</label>
+          <input type="text" name="youtube_url" id="youtube_url" class="youtube-input" placeholder="https://www.youtube.com/watch?v=...">
         </div>
       </div>
-      <button type="submit" class="separate-button">Separate</button>
+      <button type="submit" class="separate-button">분리하기</button>
     </form>
   </div>
 
@@ -55,32 +79,14 @@
       <audio id="audioPlayer" controls style="width: 100%;"></audio>
   </div>
 
-  {% if vocal_url %}
-  <div id="resultContainer" class="container result-container">
-    <h2>Result Files</h2>
-    <div class="result-item">
-      <span>Original</span>
-      <audio controls src="{{ original_url }}"></audio>
-      <a href="{{ original_url }}" download><button>Download</button></a>
-    </div>
-    <div class="result-item">
-      <span>Vocal</span>
-      <audio controls src="{{ vocal_url }}"></audio>
-      <a href="{{ vocal_url }}" download><button>Download</button></a>
-    </div>
-    <div class="result-item">
-      <span>Instrumental</span>
-      <audio controls src="{{ inst_url }}"></audio>
-      <a href="{{ inst_url }}" download><button>Download</button></a>
-    </div>
-    <button type="button" class="reset-button" onclick="resetPage()">새 작업</button>
-  </div>
-  {% endif %}
 
   <script>
     // Configuration from backend
     const MAX_FILE_SIZE_MB = {{ MAX_FILE_SIZE_MB }};
     const MAX_DURATION_SECONDS = {{ MAX_DURATION_SECONDS }};
+    
+    // Task polling configuration
+    let pollInterval = null;
 
     function openTab(evt, tabName) {
       var i, tabcontent, tablinks;
@@ -113,24 +119,115 @@
     }
 
     const fileInput = document.getElementById('fileInput');
+    const fileNameSpan = document.getElementById('fileName');
     const audioPlayer = document.getElementById('audioPlayer');
     const previewContainer = document.getElementById('preview-container');
     const form = document.querySelector('form');
     const separateButton = document.querySelector('.separate-button');
     const loadingOverlay = document.getElementById('loadingOverlay');
     const youtubeUrlInput = document.getElementById('youtube_url');
+    const inputGroup = document.querySelector('.input-group');
 
-    // Helper function to display error messages
-    function displayErrorMessage(message) {
+    // Drag and drop
+    inputGroup.addEventListener('dragover', (event) => {
+        event.preventDefault();
+        inputGroup.style.borderColor = '#007bff';
+    });
+
+    inputGroup.addEventListener('dragleave', (event) => {
+        event.preventDefault();
+        inputGroup.style.borderColor = '#ced4da';
+    });
+
+    inputGroup.addEventListener('drop', (event) => {
+        event.preventDefault();
+        inputGroup.style.borderColor = '#ced4da';
+        const files = event.dataTransfer.files;
+        if (files.length > 0) {
+            fileInput.files = files;
+            const changeEvent = new Event('change');
+            fileInput.dispatchEvent(changeEvent);
+        }
+    });
+
+
+    // Enhanced error message system
+    function displayErrorMessage(message, suggestions = [], errorType = 'error') {
       let errorDiv = document.getElementById('clientErrorMessage');
       if (!errorDiv) {
         errorDiv = document.createElement('div');
         errorDiv.id = 'clientErrorMessage';
-        errorDiv.className = 'status-message error';
-        document.body.insertBefore(errorDiv, document.body.firstChild.nextSibling); // Insert after h1
+        errorDiv.className = `status-message ${errorType}`;
+        // Insert after the main container
+        const mainContainer = document.querySelector('.container');
+        mainContainer.parentNode.insertBefore(errorDiv, mainContainer.nextSibling);
       }
-      errorDiv.textContent = message;
+      
+      let content = `<div class="error-content">
+        <div class="error-icon">❌</div>
+        <div class="error-details">
+          <div class="error-message">${message}</div>`;
+      
+      if (suggestions.length > 0) {
+        content += `<div class="error-suggestions">
+          <div class="suggestions-title">💡 해결 방법:</div>
+          <ul class="suggestions-list">`;
+        suggestions.forEach(suggestion => {
+          content += `<li>${suggestion}</li>`;
+        });
+        content += `</ul></div>`;
+      }
+      
+      content += `</div></div>`;
+      errorDiv.innerHTML = content;
       errorDiv.style.display = 'block';
+      
+      // Auto-hide after 10 seconds for non-critical errors
+      if (errorType === 'warning') {
+        setTimeout(() => {
+          if (errorDiv) {
+            errorDiv.style.display = 'none';
+          }
+        }, 10000);
+      }
+    }
+
+    function getErrorSuggestions(errorType, details = {}) {
+      const suggestions = {
+        fileSize: [
+          '더 작은 용량의 파일을 선택해주세요',
+          '온라인 MP3 압축 도구를 사용해 파일 크기를 줄여보세요',
+          '오디오 품질을 낮춰서 다시 저장해보세요'
+        ],
+        fileType: [
+          'MP3, WAV, M4A, AAC, OGG 형식의 파일을 업로드해주세요',
+          '파일 확장자가 올바른지 확인해주세요',
+          '오디오 변환 프로그램을 사용해 지원 형식으로 변환해보세요'
+        ],
+        duration: [
+          `더 짧은 길이(최대 ${Math.floor(MAX_DURATION_SECONDS/60)}분)의 오디오를 선택해주세요`,
+          '오디오 편집 프로그램으로 길이를 줄여보세요',
+          '긴 오디오는 여러 부분으로 나누어 처리해보세요'
+        ],
+        youtube: [
+          'YouTube URL 형식이 올바른지 확인해주세요',
+          'https://www.youtube.com/watch?v=... 형태여야 합니다',
+          '비공개 또는 제한된 동영상이 아닌지 확인해주세요',
+          '동영상이 존재하는지 브라우저에서 직접 접속해 확인해보세요'
+        ],
+        network: [
+          '인터넷 연결 상태를 확인해주세요',
+          '잠시 후 다시 시도해주세요',
+          '방화벽이나 보안 프로그램이 차단하고 있지 않은지 확인해주세요'
+        ],
+        server: [
+          '서버가 일시적으로 과부하 상태일 수 있습니다',
+          '5-10분 후 다시 시도해주세요',
+          '문제가 지속되면 관리자에게 문의해주세요'
+        ]
+      };
+      
+      return suggestions[errorType] || ['잠시 후 다시 시도해주세요'];
     }
 
     // Helper function to clear error messages
@@ -142,16 +239,268 @@
       }
     }
 
-    form.addEventListener('submit', (event) => {
+    // Progress management functions
+    let currentStep = 1;
+    let progressInterval;
+
+    function updateProgress(step, percentage, statusText) {
+      // Update step indicators
+      document.querySelectorAll('.progress-step').forEach((stepEl, index) => {
+        stepEl.classList.remove('active', 'completed');
+        if (index + 1 < step) {
+          stepEl.classList.add('completed');
+        } else if (index + 1 === step) {
+          stepEl.classList.add('active');
+        }
+      });
+
+      // Round percentage to whole number to avoid ugly decimals
+      const roundedPercentage = Math.round(percentage);
+
+      // Update circular progress
+      const circle = document.getElementById('progressCircle');
+      const circumference = 2 * Math.PI * 50;
+      const offset = circumference - (roundedPercentage / 100) * circumference;
+      circle.style.strokeDashoffset = offset;
+
+      // Update percentage text with rounded value
+      document.getElementById('progressPercent').textContent = roundedPercentage + '%';
+
+      // Update status text
+      document.getElementById('loadingStatusText').textContent = statusText;
+    }
+
+    // Task status polling functions
+    function startStatusPolling(taskId) {
+      if (!taskId) return;
+      
+      // Clear any existing intervals
+      if (pollInterval) {
+        clearInterval(pollInterval);
+      }
+      
+      // Show loading overlay
+      loadingOverlay.style.display = 'flex';
+      
+      // Poll every 2 seconds
+      pollInterval = setInterval(async () => {
+        try {
+          const response = await fetch(`/api/task/${taskId}`);
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+          
+          const taskData = await response.json();
+          updateTaskProgress(taskData);
+          
+          // Stop polling if task is complete or failed
+          if (taskData.status === 'completed' || taskData.status === 'failed') {
+            clearInterval(pollInterval);
+            pollInterval = null;
+            
+            if (taskData.status === 'completed') {
+              handleTaskCompletion(taskData);
+            } else {
+              handleTaskError(taskData);
+            }
+          }
+          
+        } catch (error) {
+          console.error('Polling error:', error);
+          // Don't stop polling on network errors - keep trying
+        }
+      }, 2000);
+    }
+    
+    function updateTaskProgress(taskData) {
+      const progress = taskData.progress || 0;
+      const message = taskData.message || '작업 중...';
+      
+      // Determine step based on progress
+      let step = 1;
+      if (progress >= 20) step = 2;
+      if (progress >= 40) step = 3;
+      if (progress >= 80) step = 4;
+      
+      updateProgress(step, progress, message);
+    }
+    
+    function handleTaskCompletion(taskData) {
+      // Complete progress animation
+      updateProgress(4, 100, '완료되었습니다!');
+      
+      // Hide loading overlay after brief delay
+      setTimeout(() => {
+        loadingOverlay.style.display = 'none';
+        
+        // Display results
+        displayTaskResults(taskData);
+      }, 1500);
+    }
+    
+    function handleTaskError(taskData) {
+      // Stop progress animation
+      clearInterval(progressInterval);
+      
+      // Hide loading overlay
+      loadingOverlay.style.display = 'none';
+      
+      // Show error message
+      const errorMsg = taskData.error_message || taskData.message || '작업 실행 중 오류가 발생했습니다.';
+      displayErrorMessage(errorMsg, getErrorSuggestions('server'));
+      
+      // Re-enable form
+      separateButton.disabled = false;
+    }
+    
+    function displayTaskResults(taskData) {
+      // Create result container if it doesn't exist
+      let resultContainer = document.getElementById('resultContainer');
+      if (!resultContainer) {
+        resultContainer = document.createElement('div');
+        resultContainer.id = 'resultContainer';
+        resultContainer.className = 'container result-container';
+        document.body.appendChild(resultContainer);
+      }
+      
+      // Build results HTML
+      const resultsHTML = `
+        <h2>🎵 분리 결과</h2>
+        <div class="result-item">
+          <span>원본</span>
+          <audio controls src="${taskData.original_url}"></audio>
+          <a href="${taskData.original_url}" download title="원본 파일 다운로드">
+            <button class="download-btn"></button>
+          </a>
+        </div>
+        <div class="result-item">
+          <span>보컬</span>
+          <audio controls src="${taskData.vocal_url}"></audio>
+          <a href="${taskData.vocal_url}" download title="보컬 파일 다운로드">
+            <button class="download-btn"></button>
+          </a>
+        </div>
+        <div class="result-item">
+          <span>반주</span>
+          <audio controls src="${taskData.inst_url}"></audio>
+          <a href="${taskData.inst_url}" download title="반주 파일 다운로드">
+            <button class="download-btn"></button>
+          </a>
+        </div>
+        <button type="button" class="reset-button" onclick="resetPage()">새 작업</button>
+      `;
+      
+      resultContainer.innerHTML = resultsHTML;
+      resultContainer.style.display = 'block';
+      
+      // Auto-scroll to results
+      setTimeout(() => {
+        resultContainer.scrollIntoView({ 
+          behavior: 'smooth', 
+          block: 'start',
+          inline: 'nearest'
+        });
+        
+        // Add highlight effect
+        resultContainer.style.animation = 'highlightResults 2s ease-in-out';
+      }, 500);
+    }
+
+    function simulateProgress(isYouTube = false) {
+      // Legacy function - kept for compatibility but not used with real-time polling
+      currentStep = 1;
+      updateProgress(1, 10, isYouTube ? '유튜브에서 MP3 다운로드 중...' : '파일 업로드 중...');
+    }
+    
+    // This would be called when the server actually completes (not implemented in current version)
+    function completeProgress() {
+      clearInterval(progressInterval);
+      currentStep = 4;
+      updateProgress(4, 100, '완료되었습니다!');
+      // Hide loading overlay after a brief moment
+      setTimeout(() => {
+        loadingOverlay.style.display = 'none';
+      }, 1000);
+    }
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault(); // Always prevent default form submission
+      
       // Prevent form submission if button is disabled by client-side validation
       if (separateButton.disabled) {
-        event.preventDefault();
         return;
       }
       separateButton.disabled = true;
-      loadingOverlay.style.display = 'flex';
+      
       clearErrorMessage(); // Clear client-side error on submit
+      
+      try {
+        // Submit form via AJAX
+        const formData = new FormData(form);
+        
+        const response = await fetch('/upload', {
+          method: 'POST',
+          body: formData
+        });
+        
+        const result = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(result.error || 'Upload failed');
+        }
+        
+        // Got task_id - start polling immediately
+        console.log('Starting immediate polling for task:', result.task_id);
+        startStatusPolling(result.task_id);
+        
+      } catch (error) {
+        console.error('Upload error:', error);
+        displayErrorMessage(error.message || '업로드 중 오류가 발생했습니다.', getErrorSuggestions('server'));
+        separateButton.disabled = false;
+      }
     });
+
+    // Enhanced file validation functions
+    function validateFileType(file) {
+      const allowedTypes = ['audio/mp3', 'audio/mpeg', 'audio/wav', 'audio/m4a', 'audio/aac', 'audio/ogg'];
+      const allowedExtensions = ['.mp3', '.wav', '.m4a', '.aac', '.ogg'];
+      
+      const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
+      const isValidType = allowedTypes.includes(file.type) || allowedExtensions.includes(fileExtension);
+      
+      return {
+        valid: isValidType,
+        message: isValidType ? '' : `지원되지 않는 파일 형식입니다. 지원 형식: MP3, WAV, M4A, AAC, OGG`
+      };
+    }
+
+    function validateFileSize(file) {
+      const fileSizeMB = file.size / (1024 * 1024);
+      const isValid = fileSizeMB <= MAX_FILE_SIZE_MB;
+      
+      return {
+        valid: isValid,
+        message: isValid ? '' : `파일 크기가 ${fileSizeMB.toFixed(1)}MB입니다. 최대 ${MAX_FILE_SIZE_MB}MB까지 허용됩니다.`,
+        size: fileSizeMB
+      };
+    }
+
+    function validateAudioDuration(audio, callback) {
+      audio.addEventListener('loadedmetadata', function() {
+        const duration = audio.duration;
+        const isValid = duration <= MAX_DURATION_SECONDS;
+        const durationMinutes = Math.floor(duration / 60);
+        const maxMinutes = Math.floor(MAX_DURATION_SECONDS / 60);
+        
+        callback({
+          valid: isValid,
+          message: isValid ? '' : `오디오 길이가 ${durationMinutes}분입니다. 최대 ${maxMinutes}분까지 허용됩니다.`,
+          duration: duration
+        });
+      });
+    }
+
+    // Remove displayFileInfo function - no longer needed
 
     fileInput.addEventListener('change', (event) => {
       clearErrorMessage(); // Clear previous errors when a new file is selected
@@ -159,32 +508,91 @@
 
       const file = event.target.files[0];
       if (file) {
-        // Client-side file size check
-        const fileSizeMB = file.size / (1024 * 1024);
-        if (fileSizeMB > MAX_FILE_SIZE_MB) {
-          displayErrorMessage(`파일 크기가 너무 큽니다. 최대 ${MAX_FILE_SIZE_MB}MB까지 허용됩니다.`);
-          separateButton.disabled = true; // Disable submit button
+        fileNameSpan.textContent = file.name;
+        
+        // Enhanced validation
+        const typeValidation = validateFileType(file);
+        const sizeValidation = validateFileSize(file);
+        
+        const validation = {
+          type: typeValidation,
+          size: sizeValidation
+        };
+
+        // File info display removed for cleaner UI
+
+        // Check type validation first
+        if (!typeValidation.valid) {
+          const suggestions = getErrorSuggestions('fileType');
+          displayErrorMessage(typeValidation.message, suggestions);
+          separateButton.disabled = true;
           previewContainer.style.display = 'none';
           audioPlayer.src = '';
           return;
         }
 
-        // Client-side duration check is complex and unreliable for all formats.
-        // We will rely on server-side check for duration.
-        // For immediate feedback, we can show preview and let server handle duration.
+        // Check size validation
+        if (!sizeValidation.valid) {
+          const suggestions = getErrorSuggestions('fileSize');
+          displayErrorMessage(sizeValidation.message, suggestions);
+          separateButton.disabled = true;
+          previewContainer.style.display = 'none';
+          audioPlayer.src = '';
+          return;
+        }
 
+        // Create preview and check duration
         const objectURL = URL.createObjectURL(file);
         audioPlayer.src = objectURL;
         previewContainer.style.display = 'block';
+
+        // Validate duration when metadata loads
+        validateAudioDuration(audioPlayer, (durationResult) => {
+          if (!durationResult.valid) {
+            const suggestions = getErrorSuggestions('duration');
+            displayErrorMessage(durationResult.message, suggestions);
+            separateButton.disabled = true;
+          } else {
+            // Duration validation passed - no additional display needed
+          }
+        });
+
       } else {
+        fileNameSpan.textContent = '선택된 파일 없음';
         previewContainer.style.display = 'none';
         audioPlayer.src = '';
       }
     });
 
     function resetPage() {
-      window.location.reload(); // Simply reload the page to reset everything
+      window.location.href = "/";
     }
+
+    // Initialize page when loaded
+    window.addEventListener('load', function() {
+      // Auto-scroll to results when page loads with results (legacy support)
+      const resultContainer = document.getElementById('resultContainer');
+      if (resultContainer) {
+        // Add a small delay to ensure everything is rendered
+        setTimeout(() => {
+          resultContainer.scrollIntoView({ 
+            behavior: 'smooth', 
+            block: 'start',
+            inline: 'nearest'
+          });
+          
+          // Add a subtle highlight effect
+          resultContainer.style.animation = 'highlightResults 2s ease-in-out';
+        }, 500);
+      }
+    });
+    
+    // Clean up polling on page unload
+    window.addEventListener('beforeunload', function() {
+      if (pollInterval) {
+        clearInterval(pollInterval);
+      }
+    });
   </script>
 </body>
 </html>
