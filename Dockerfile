@@ -13,12 +13,16 @@ RUN apt-get update && apt-get install -y \
 # 작업 디렉토리 설정
 WORKDIR /app
 
-# 웹 프레임워크만 먼저 설치 (가벼운 것들)
+# 웹 프레임워크 먼저 설치 (로컬과 동일한 버전)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Spleeter 설치 (의존성 자동 해결)
-RUN pip install --no-cache-dir spleeter==2.3.0
+# Spleeter 설치 (최신 typing_extensions와 강제 호환)
+RUN pip install --no-cache-dir spleeter==2.3.0 --no-deps
+RUN pip install --no-cache-dir librosa==0.8.0 tensorflow==2.5.0 numpy==1.19.5
+
+# 최종적으로 로컬과 동일한 typing_extensions 유지
+RUN pip install --no-cache-dir --force-reinstall typing_extensions==4.14.1
 
 # 애플리케이션 코드 복사
 COPY . .
