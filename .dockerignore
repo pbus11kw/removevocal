@@ -1,0 +1,79 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 가상환경
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 로그 및 임시 파일
+*.log
+logs/*.log
+uploads/*
+outputs/*
+!uploads/.gitkeep
+!outputs/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Railway
+.railway/
+
+# 테스트
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 환경 변수 (보안상 중요)
+.env.local
+.env.development
+.env.production
+
+# Node.js (만약 프론트엔드가 있다면)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 로컬 개발 전용 파일들 (Docker 컨테이너에서 제외)
+run.bat
+venv.bat
+render.yaml
+# config.ini는 배포에 필요하므로 포함
+
+# 이상한 파일들
+=*
+nul

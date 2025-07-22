@@ -1,7 +1,8 @@
-fastapi
-uvicorn[standard]
-python-multipart
-jinja2
-spleeter
-python-dotenv
-yt-dlp
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+jinja2>=3.1.2
+spleeter==2.3.0
+python-dotenv>=1.0.0
+yt-dlp>=2023.7.6
+librosa>=0.10.0

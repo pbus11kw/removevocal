@@ -148,6 +148,7 @@ def process_audio_separation(input_path: str, basename: str, output_dir: str, sp
     Returns: (vocal_mp3_path, inst_mp3_path, error_message)
     """
     try:
+        separation_start_time = time.time()
         spleeter_result_dir = os.path.join(output_dir, basename)
         os.makedirs(spleeter_result_dir, exist_ok=True)
         app_logger.info(f"Created Spleeter output directory: {spleeter_result_dir}")
@@ -189,6 +190,9 @@ def process_audio_separation(input_path: str, basename: str, output_dir: str, sp
         cleanup_file(vocal_wav_path)
         cleanup_file(inst_wav_path)
         
+        separation_end_time = time.time()
+        separation_time = separation_end_time - separation_start_time
+        app_logger.info(f"Vocal separation for {basename} took {separation_time:.2f} seconds.")
         app_logger.info(f"Audio separation completed for: {basename}")
         return vocal_mp3_path, inst_mp3_path, None
         

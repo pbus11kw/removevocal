@@ -33,10 +33,18 @@ app_logger.info(f"Directories: UPLOAD_DIR={UPLOAD_DIR}, OUTPUT_DIR={OUTPUT_DIR}"
 # Clean up and create directories
 for directory in [UPLOAD_DIR, OUTPUT_DIR]:
     if os.path.exists(directory):
-        shutil.rmtree(directory)
+        # .gitkeep 파일을 제외하고 모든 파일 삭제
+        for filename in os.listdir(directory):
+            if filename != '.gitkeep':
+                file_path = os.path.join(directory, filename)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+                elif os.path.isdir(file_path):
+                    shutil.rmtree(file_path)
         app_logger.info(f"Cleaned up directory: {directory}")
-    os.makedirs(directory, exist_ok=True)
-    app_logger.info(f"Created directory: {directory}")
+    else:
+        os.makedirs(directory, exist_ok=True)
+        app_logger.info(f"Created directory: {directory}")
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
@@ -206,3 +214,19 @@ def download(
     except Exception as e:
         app_logger.error(f"Download error: {e}")
         raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
+
+# Railway 배포용 서버 시작
+if __name__ == "__main__":
+    import os
+    import uvicorn
+    
+    # Railway에서 제공하는 PORT 환경변수 사용
+    port = int(os.getenv("PORT", 8000))
+    
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=port,
+        reload=False,  # 프로덕션에서는 reload 비활성화
+        access_log=True
+    )

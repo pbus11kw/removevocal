@@ -94,3 +94,13 @@ htmlcov/
 *~
 .#*
 \#*#
+
+# 로컬 개발 전용 파일들 (Git에는 포함하되 Docker에서 제외)
+# run.bat - 로컬 실행용
+# venv.bat - 가상환경 활성화용
+# render.yaml - Render 배포용 (Railway 사용시)
+# config.ini - 로컬 설정용
+
+# 이상한 파일들
+=*
+nul
