@@ -1,0 +1,12 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "uvicorn main:app --host 0.0.0.0 --port $PORT"
+
+[env]
+UPLOAD_DIR = "uploads"
+OUTPUT_DIR = "outputs" 
+SPLEETER_MODEL = "spleeter:2stems"
+MAX_CONCURRENT_TASKS = "2"
+TASK_TIMEOUT_SECONDS = "600"

@@ -2,6 +2,19 @@ services:
   - type: web
     name: removevocal
     env: python
-    buildCommand: "pip install -r requirements.txt"
+    buildCommand: "apt-get update && apt-get install -y ffmpeg && pip install -r requirements.txt"
     startCommand: "uvicorn main:app --host 0.0.0.0 --port 10000"
-    pythonVersion: 3.10
+    pythonVersion: "3.10"
+    plan: free
+    healthCheckPath: "/"
+    envVars:
+      - key: UPLOAD_DIR
+        value: uploads
+      - key: OUTPUT_DIR
+        value: outputs
+      - key: SPLEETER_MODEL
+        value: spleeter:2stems
+      - key: MAX_CONCURRENT_TASKS
+        value: 2
+      - key: TASK_TIMEOUT_SECONDS
+        value: 600
